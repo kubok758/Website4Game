@@ -1670,7 +1670,8 @@
             isActive: false,
             pointerId: null, // Track captured pointer
             mode: null, // 'drag', 'swipe', 'tap'
-            swipeThreshold: 25, // Reduced for faster response
+            swipeThreshold: 8, // Very small - detect direction early
+            swipeDetected: false, // Flag to track if swipe was already fired this gesture
             dragCallback: null,
             swipeCallback: null,
             tapCallback: null,
@@ -1709,6 +1710,7 @@
             touchControl.mode = null;
             touchControl.isActive = false;
             touchControl.pointerId = null;
+            touchControl.swipeDetected = false;
             document.getElementById('tap-zone').classList.add('hidden');
             document.getElementById('swipe-hint').classList.add('hidden');
             document.getElementById('touch-indicator').classList.remove('active');
@@ -1816,6 +1818,7 @@
                 touchControl.startY = e.clientY;
                 touchControl.currentX = e.clientX;
                 touchControl.currentY = e.clientY;
+                touchControl.swipeDetected = false; // Reset for new gesture
                 
                 // Show touch indicator for drag mode
                 if (touchControl.mode === 'drag' || touchControl.mode === 'drag-horizontal') {
@@ -1837,16 +1840,47 @@
                 touchControl.currentX = e.clientX;
                 touchControl.currentY = e.clientY;
                 
-                // Move touch indicator
+                const dx = e.clientX - touchControl.startX;
+                const dy = e.clientY - touchControl.startY;
+                
+                // SWIPE MODE: Detect direction IMMEDIATELY on first movement
+                if (touchControl.mode === 'swipe' && touchControl.swipeCallback && !touchControl.swipeDetected) {
+                    const absDx = Math.abs(dx);
+                    const absDy = Math.abs(dy);
+                    const dist = Math.max(absDx, absDy);
+                    
+                    // Fire swipe as soon as threshold is crossed
+                    if (dist >= touchControl.swipeThreshold) {
+                        touchControl.swipeDetected = true;
+                        
+                        if (absDx > absDy) {
+                            touchControl.swipeCallback(dx > 0 ? 'right' : 'left');
+                        } else {
+                            touchControl.swipeCallback(dy > 0 ? 'down' : 'up');
+                        }
+                        vibrate(20);
+                        
+                        // Reset start position for next swipe in same gesture
+                        touchControl.startX = e.clientX;
+                        touchControl.startY = e.clientY;
+                        
+                        // Allow new swipe after brief delay
+                        setTimeout(() => {
+                            if (touchControl.isActive) {
+                                touchControl.swipeDetected = false;
+                            }
+                        }, 150);
+                    }
+                }
+                
+                // DRAG MODE: Continuous position tracking
                 if (touchControl.mode === 'drag' || touchControl.mode === 'drag-horizontal') {
                     touchIndicator.style.left = e.clientX + 'px';
                     touchIndicator.style.top = e.clientY + 'px';
                     
-                    // Throttle drag callbacks
+                    // Call drag callback with absolute position
                     if (touchControl.dragCallback && now - touchControl.lastDragTime > touchControl.dragThrottle) {
                         touchControl.lastDragTime = now;
-                        const dx = e.clientX - touchControl.startX;
-                        const dy = e.clientY - touchControl.startY;
                         touchControl.dragCallback(e.clientX, e.clientY, dx, dy);
                     }
                 }
@@ -1861,28 +1895,17 @@
                     container.releasePointerCapture(e.pointerId);
                 } catch (err) {}
                 
-                touchControl.isActive = false;
-                touchControl.pointerId = null;
-                touchIndicator.classList.remove('active');
-                
                 const dx = touchControl.currentX - touchControl.startX;
                 const dy = touchControl.currentY - touchControl.startY;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                // Detect swipe
-                if (touchControl.swipeCallback && dist > touchControl.swipeThreshold) {
-                    const absDx = Math.abs(dx);
-                    const absDy = Math.abs(dy);
-                    
-                    if (absDx > absDy) {
-                        touchControl.swipeCallback(dx > 0 ? 'right' : 'left');
-                    } else {
-                        touchControl.swipeCallback(dy > 0 ? 'down' : 'up');
-                    }
-                    vibrate(20);
-                } else if (touchControl.tapCallback && dist < 15) {
-                    // Tap on canvas (for games that use canvas tap)
-                    // Pass canvas-relative coordinates
+                touchControl.isActive = false;
+                touchControl.pointerId = null;
+                touchControl.swipeDetected = false;
+                touchIndicator.classList.remove('active');
+                
+                // TAP detection (only if no swipe was detected and small movement)
+                if (touchControl.tapCallback && dist < 15) {
                     const rect = canvas ? canvas.getBoundingClientRect() : null;
                     if (rect) {
                         const canvasX = touchControl.startX - rect.left;
