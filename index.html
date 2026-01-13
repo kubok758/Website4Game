@@ -1661,15 +1661,16 @@
         let canvas = null;
         let gameState = {};
 
-        /* === TOUCH CONTROL SYSTEM === */
+        /* === POINTER CONTROL SYSTEM === */
         const touchControl = {
             startX: 0,
             startY: 0,
             currentX: 0,
             currentY: 0,
             isActive: false,
+            pointerId: null, // Track captured pointer
             mode: null, // 'drag', 'swipe', 'tap'
-            swipeThreshold: 30,
+            swipeThreshold: 25, // Reduced for faster response
             dragCallback: null,
             swipeCallback: null,
             tapCallback: null,
@@ -1706,6 +1707,8 @@
             touchControl.swipeCallback = null;
             touchControl.tapCallback = null;
             touchControl.mode = null;
+            touchControl.isActive = false;
+            touchControl.pointerId = null;
             document.getElementById('tap-zone').classList.add('hidden');
             document.getElementById('swipe-hint').classList.add('hidden');
             document.getElementById('touch-indicator').classList.remove('active');
@@ -1769,15 +1772,18 @@
             }
         }
 
-        // Initialize touch event listeners (once)
+        // Initialize pointer event listeners with capture (once)
         function initTouchSystem() {
             const gamePlayer = document.getElementById('game-player');
             const touchIndicator = document.getElementById('touch-indicator');
             const tapZone = document.getElementById('tap-zone');
+            const container = document.getElementById('canvas-container');
             
-            // Tap zone handler
+            // Tap zone handler with pointer capture
             tapZone.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
+                e.stopPropagation();
+                tapZone.setPointerCapture(e.pointerId);
                 tapZone.classList.add('tapped');
                 if (touchControl.tapCallback) {
                     touchControl.tapCallback();
@@ -1785,17 +1791,27 @@
                 }
             });
             
-            tapZone.addEventListener('pointerup', () => {
+            tapZone.addEventListener('pointerup', (e) => {
+                tapZone.releasePointerCapture(e.pointerId);
                 tapZone.classList.remove('tapped');
             });
             
-            // Main touch handlers on canvas container
-            const container = document.getElementById('canvas-container');
+            tapZone.addEventListener('pointercancel', (e) => {
+                tapZone.releasePointerCapture(e.pointerId);
+                tapZone.classList.remove('tapped');
+            });
             
+            // Main pointer handlers on canvas container with IMMEDIATE capture
             container.addEventListener('pointerdown', (e) => {
                 if (gamePlayer.classList.contains('hidden')) return;
                 
+                // CRITICAL: Capture pointer immediately to own all gestures
+                e.preventDefault();
+                e.stopPropagation();
+                container.setPointerCapture(e.pointerId);
+                
                 touchControl.isActive = true;
+                touchControl.pointerId = e.pointerId;
                 touchControl.startX = e.clientX;
                 touchControl.startY = e.clientY;
                 touchControl.currentX = e.clientX;
@@ -1811,6 +1827,11 @@
             
             container.addEventListener('pointermove', (e) => {
                 if (!touchControl.isActive || gamePlayer.classList.contains('hidden')) return;
+                
+                // Only process if this is our captured pointer
+                if (e.pointerId !== touchControl.pointerId) return;
+                
+                e.preventDefault();
                 
                 const now = Date.now();
                 touchControl.currentX = e.clientX;
@@ -1833,7 +1854,15 @@
             
             const endTouch = (e) => {
                 if (!touchControl.isActive) return;
+                if (e.pointerId !== touchControl.pointerId) return;
+                
+                // Release pointer capture
+                try {
+                    container.releasePointerCapture(e.pointerId);
+                } catch (err) {}
+                
                 touchControl.isActive = false;
+                touchControl.pointerId = null;
                 touchIndicator.classList.remove('active');
                 
                 const dx = touchControl.currentX - touchControl.startX;
@@ -1868,7 +1897,8 @@
             
             container.addEventListener('pointerup', endTouch);
             container.addEventListener('pointercancel', endTouch);
-            container.addEventListener('pointerleave', endTouch);
+            // lostpointercapture fires when capture is released (backup)
+            container.addEventListener('lostpointercapture', endTouch);
         }
 
         function launchGame(gameId) {
