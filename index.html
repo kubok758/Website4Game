@@ -1676,18 +1676,17 @@
         const touchControl = {
             startX: 0,
             startY: 0,
+            lastX: 0, // Track last position for continuous swipe detection
+            lastY: 0,
             currentX: 0,
             currentY: 0,
             isActive: false,
             pointerId: null, // Track captured pointer
             mode: null, // 'drag', 'swipe', 'tap'
-            swipeThreshold: 8, // Very small - detect direction early
-            swipeDetected: false, // Flag to track if swipe was already fired this gesture
+            swipeThreshold: 5, // Very small - detect direction on minimal movement
             dragCallback: null,
             swipeCallback: null,
-            tapCallback: null,
-            lastDragTime: 0,
-            dragThrottle: 16 // ~60fps
+            tapCallback: null
         };
 
         function setupTouchControls(options = {}) {
@@ -1721,7 +1720,6 @@
             touchControl.mode = null;
             touchControl.isActive = false;
             touchControl.pointerId = null;
-            touchControl.swipeDetected = false;
             document.getElementById('tap-zone').classList.add('hidden');
             document.getElementById('swipe-hint').classList.add('hidden');
             document.getElementById('touch-indicator').classList.remove('active');
@@ -1830,15 +1828,21 @@
                 touchControl.pointerId = e.pointerId;
                 touchControl.startX = e.clientX;
                 touchControl.startY = e.clientY;
+                touchControl.lastX = e.clientX;
+                touchControl.lastY = e.clientY;
                 touchControl.currentX = e.clientX;
                 touchControl.currentY = e.clientY;
-                touchControl.swipeDetected = false; // Reset for new gesture
                 
                 // Show touch indicator for drag mode
                 if (touchControl.mode === 'drag' || touchControl.mode === 'drag-horizontal') {
                     touchIndicator.style.left = e.clientX + 'px';
                     touchIndicator.style.top = e.clientY + 'px';
                     touchIndicator.classList.add('active');
+                    
+                    // IMMEDIATE first drag callback on touch start
+                    if (touchControl.dragCallback) {
+                        touchControl.dragCallback(e.clientX, e.clientY, 0, 0);
+                    }
                 }
             });
             
@@ -1850,23 +1854,21 @@
                 
                 e.preventDefault();
                 
-                const now = Date.now();
                 touchControl.currentX = e.clientX;
                 touchControl.currentY = e.clientY;
                 
-                const dx = e.clientX - touchControl.startX;
-                const dy = e.clientY - touchControl.startY;
+                // Calculate delta from LAST position (for continuous tracking)
+                const dx = e.clientX - touchControl.lastX;
+                const dy = e.clientY - touchControl.lastY;
                 
-                // SWIPE MODE: Detect direction IMMEDIATELY on first movement
-                if (touchControl.mode === 'swipe' && touchControl.swipeCallback && !touchControl.swipeDetected) {
+                // SWIPE MODE: Detect direction from movement between frames
+                if (touchControl.mode === 'swipe' && touchControl.swipeCallback) {
                     const absDx = Math.abs(dx);
                     const absDy = Math.abs(dy);
                     const dist = Math.max(absDx, absDy);
                     
-                    // Fire swipe as soon as threshold is crossed
+                    // Fire swipe when threshold crossed - NO COOLDOWN
                     if (dist >= touchControl.swipeThreshold) {
-                        touchControl.swipeDetected = true;
-                        
                         if (absDx > absDy) {
                             touchControl.swipeCallback(dx > 0 ? 'right' : 'left');
                         } else {
@@ -1874,29 +1876,28 @@
                         }
                         vibrate(20);
                         
-                        // Reset start position for next swipe in same gesture
-                        touchControl.startX = e.clientX;
-                        touchControl.startY = e.clientY;
-                        
-                        // Allow new swipe after brief delay
-                        setTimeout(() => {
-                            if (touchControl.isActive) {
-                                touchControl.swipeDetected = false;
-                            }
-                        }, 150);
+                        // Update last position ONLY when swipe fires
+                        // This allows continuous swipes without cooldown
+                        touchControl.lastX = e.clientX;
+                        touchControl.lastY = e.clientY;
                     }
                 }
                 
-                // DRAG MODE: Continuous position tracking
+                // DRAG MODE: Direct 1:1 position tracking - NO THROTTLE
                 if (touchControl.mode === 'drag' || touchControl.mode === 'drag-horizontal') {
                     touchIndicator.style.left = e.clientX + 'px';
                     touchIndicator.style.top = e.clientY + 'px';
                     
-                    // Call drag callback with absolute position
-                    if (touchControl.dragCallback && now - touchControl.lastDragTime > touchControl.dragThrottle) {
-                        touchControl.lastDragTime = now;
-                        touchControl.dragCallback(e.clientX, e.clientY, dx, dy);
+                    // ALWAYS call drag callback - no throttle for instant response
+                    if (touchControl.dragCallback) {
+                        const totalDx = e.clientX - touchControl.startX;
+                        const totalDy = e.clientY - touchControl.startY;
+                        touchControl.dragCallback(e.clientX, e.clientY, totalDx, totalDy);
                     }
+                    
+                    // Update last position for next frame
+                    touchControl.lastX = e.clientX;
+                    touchControl.lastY = e.clientY;
                 }
             });
             
@@ -1915,10 +1916,9 @@
                 
                 touchControl.isActive = false;
                 touchControl.pointerId = null;
-                touchControl.swipeDetected = false;
                 touchIndicator.classList.remove('active');
                 
-                // TAP detection (only if no swipe was detected and small movement)
+                // TAP detection (only if small movement)
                 if (touchControl.tapCallback && dist < 15) {
                     const rect = canvas ? canvas.getBoundingClientRect() : null;
                     if (rect) {
@@ -2168,29 +2168,30 @@
         
         // 1. SNAKE
         function startSnake() {
-            // Setup touch controls - swipe to change direction
-            setupTouchControls({
-                mode: 'swipe',
-                onSwipe: (direction) => {
-                    if(direction === 'left' && dir.x === 0) nextDir = {x: -1, y: 0};
-                    if(direction === 'up' && dir.y === 0) nextDir = {x: 0, y: -1};
-                    if(direction === 'right' && dir.x === 0) nextDir = {x: 1, y: 0};
-                    if(direction === 'down' && dir.y === 0) nextDir = {x: 0, y: 1};
-                },
-                hint: 'Свайпай чтобы повернуть'
-            });
-            
             const gridSize = 20;
             let snake = [{x: 10, y: 10}];
             let food = {x: 5, y: 5};
             let dir = {x: 1, y: 0};
             let nextDir = {x: 1, y: 0};
+            
+            // Setup touch controls - swipe to change direction
+            setupTouchControls({
+                mode: 'swipe',
+                onSwipe: (direction) => {
+                    // Use nextDir to queue direction change - prevents 180° turns
+                    if(direction === 'left' && nextDir.x === 0) nextDir = {x: -1, y: 0};
+                    if(direction === 'up' && nextDir.y === 0) nextDir = {x: 0, y: -1};
+                    if(direction === 'right' && nextDir.x === 0) nextDir = {x: 1, y: 0};
+                    if(direction === 'down' && nextDir.y === 0) nextDir = {x: 0, y: 1};
+                },
+                hint: 'Свайпай чтобы повернуть'
+            });
 
             window.gameInput = (key) => {
-                if(key === 'left' && dir.x === 0) nextDir = {x: -1, y: 0};
-                if(key === 'up' && dir.y === 0) nextDir = {x: 0, y: -1};
-                if(key === 'right' && dir.x === 0) nextDir = {x: 1, y: 0};
-                if(key === 'down' && dir.y === 0) nextDir = {x: 0, y: 1};
+                if(key === 'left' && nextDir.x === 0) nextDir = {x: -1, y: 0};
+                if(key === 'up' && nextDir.y === 0) nextDir = {x: 0, y: -1};
+                if(key === 'right' && nextDir.x === 0) nextDir = {x: 1, y: 0};
+                if(key === 'down' && nextDir.y === 0) nextDir = {x: 0, y: 1};
             };
 
             state.activeGameInterval = setInterval(() => {
@@ -2878,7 +2879,7 @@
         // 7. PONG
         function startPong() {
             let paddle = {y: canvas.height/2, h: 80, w: 10, speed: 10};
-            let ai = {y: canvas.height/2, h: 80, w: 10, speed: 6, targetY: canvas.height/2, reactionTime: 0};
+            let ai = {y: canvas.height/2, h: 80, w: 10, speed: 8, targetY: canvas.height/2, reactionTime: 0}; // Faster AI
             let ball = {x: canvas.width/2, y: canvas.height/2, vx: 5, vy: 4, r: 8};
             let difficulty = 1;
             let rallies = 0;
@@ -2904,16 +2905,17 @@
                 }
                 
                 // Add some randomness based on difficulty (less accurate at low difficulty)
-                const errorRange = Math.max(0, 50 - difficulty * 5);
+                const errorRange = Math.max(0, 40 - difficulty * 5);
                 return predY + (Math.random() - 0.5) * errorRange;
             };
             
-            // Touch: drag finger to move paddle
+            // Touch: drag finger to move paddle - direct 1:1 tracking
             setupTouchControls({
                 mode: 'drag',
                 onDrag: (x, y, dx, dy) => {
                     const rect = canvas.getBoundingClientRect();
                     const canvasY = y - rect.top;
+                    // Direct position - paddle center follows finger
                     paddle.y = Math.max(0, Math.min(canvas.height - paddle.h, canvasY - paddle.h / 2));
                 },
                 hint: 'Води пальцем вверх/вниз'
@@ -2996,14 +2998,14 @@
                     }
                 }
                 
-                // AI movement towards predicted position
+                // AI movement towards predicted position - faster response
                 const aiCenter = ai.y + ai.h / 2;
                 const targetCenter = ai.targetY;
                 const diff = targetCenter - aiCenter;
                 
-                // Move with some inertia and speed limit
-                if (Math.abs(diff) > 5) {
-                    const moveAmount = Math.sign(diff) * Math.min(ai.speed, Math.abs(diff) * 0.15 + 2);
+                // Move with improved responsiveness
+                if (Math.abs(diff) > 3) {
+                    const moveAmount = Math.sign(diff) * Math.min(ai.speed, Math.abs(diff) * 0.2 + 3);
                     ai.y += moveAmount;
                 }
                 
