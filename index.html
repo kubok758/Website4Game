@@ -185,6 +185,20 @@
             letter-spacing: -0.01em;
             line-height: 1.4;
         }
+        
+        /* Lock all scrolling and gestures when game is active */
+        body.game-active {
+            touch-action: none;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overscroll-behavior: none;
+        }
+        
+        body.game-active * {
+            overscroll-behavior: none;
+        }
 
         /* Ambient background glow */
         body::before {
@@ -574,6 +588,9 @@
             z-index: 1000;
             display: flex;
             flex-direction: column;
+            touch-action: none;
+            overscroll-behavior: none;
+            -webkit-overflow-scrolling: auto;
         }
 
         #game-header {
@@ -600,6 +617,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            touch-action: manipulation;
         }
 
         #active-game-title {
@@ -622,6 +640,8 @@
             position: relative;
             background: linear-gradient(145deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
             padding: var(--space-md);
+            touch-action: none;
+            overscroll-behavior: contain;
         }
 
         canvas {
@@ -635,6 +655,9 @@
                 0 0 0 2px rgba(255, 255, 255, 0.1),
                 0 0 30px rgba(0, 0, 0, 0.5),
                 inset 0 0 60px rgba(0, 0, 0, 0.3);
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         /* === GAME FIELD FRAME === */
@@ -724,6 +747,9 @@
             height: 40%;
             z-index: 1001;
             cursor: pointer;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         .tap-zone::before {
@@ -1685,6 +1711,64 @@
             document.getElementById('touch-indicator').classList.remove('active');
         }
 
+        /* === GAME SCROLL LOCK SYSTEM === */
+        // Prevents all page scrolling, bouncing, and gestures during gameplay
+        let gameScrollLockHandler = null;
+        let gameWheelLockHandler = null;
+        
+        function lockGameScroll() {
+            document.body.classList.add('game-active');
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+            
+            // Block touchmove to prevent page scrolling
+            // This prevents the page from scrolling but allows pointer events
+            gameScrollLockHandler = function(e) {
+                const gamePlayer = document.getElementById('game-player');
+                if (gamePlayer && !gamePlayer.classList.contains('hidden')) {
+                    // Prevent default scroll behavior
+                    if (e.cancelable) {
+                        e.preventDefault();
+                    }
+                }
+            };
+            
+            // Block scroll wheel
+            gameWheelLockHandler = function(e) {
+                const gamePlayer = document.getElementById('game-player');
+                if (gamePlayer && !gamePlayer.classList.contains('hidden')) {
+                    e.preventDefault();
+                }
+            };
+            
+            // Use passive: false to allow preventDefault
+            document.addEventListener('touchmove', gameScrollLockHandler, { passive: false });
+            document.addEventListener('wheel', gameWheelLockHandler, { passive: false });
+            
+            // Prevent iOS Safari overscroll/bounce
+            document.body.style.position = 'fixed';
+            document.body.style.width = '100%';
+            document.body.style.height = '100%';
+        }
+        
+        function unlockGameScroll() {
+            document.body.classList.remove('game-active');
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+            document.body.style.position = '';
+            document.body.style.width = '';
+            document.body.style.height = '';
+            
+            if (gameScrollLockHandler) {
+                document.removeEventListener('touchmove', gameScrollLockHandler);
+                gameScrollLockHandler = null;
+            }
+            if (gameWheelLockHandler) {
+                document.removeEventListener('wheel', gameWheelLockHandler);
+                gameWheelLockHandler = null;
+            }
+        }
+
         // Initialize touch event listeners (once)
         function initTouchSystem() {
             const gamePlayer = document.getElementById('game-player');
@@ -1797,6 +1881,9 @@
                 return;
             }
             
+            // Lock page scrolling and gestures
+            lockGameScroll();
+            
             // Reset game closed flag for new game
             state.gameClosed = false;
             state.activeGameTimeouts = [];
@@ -1878,6 +1965,9 @@
         function closeGame() {
             // Mark game as closed to prevent any late callbacks
             state.gameClosed = true;
+            
+            // Unlock page scrolling
+            unlockGameScroll();
             
             // Clear main game interval
             if (state.activeGameInterval) {
